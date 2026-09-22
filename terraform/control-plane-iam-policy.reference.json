@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ECRAuth",
+      "Effect": "Allow",
+      "Action": "ecr:GetAuthorizationToken",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ECRPullOnly",
+      "Effect": "Allow",
+      "Action": ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+      "Resource": "arn:aws:ecr:us-east-1:ACCOUNT_ID:repository/coolify/*"
+    },
+    {
+      "Sid": "ReadCoolifySecretsOnly",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Comment": "In the real policy (terraform/iam.tf) this is an explicit list of 6 exact secret ARNs, not this wildcard - shown here only as a readable illustration.",
+      "Resource": "arn:aws:secretsmanager:us-east-1:ACCOUNT_ID:secret:coolify/{app-key,rds-endpoint,db-username,db-password,elasticache-endpoint,redis-auth-token}-*"
+    }
+  ]
+}

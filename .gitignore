@@ -1,0 +1,12 @@
+# Never commit real secrets or Terraform state/cache
+.env
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+tfplan
+terraform-outputs.json
+*.pem
+*.key
+terraform.tfvars
+*.auto.tfvars

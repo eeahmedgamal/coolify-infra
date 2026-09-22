@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Rendered by Terraform (control-plane.tf) into EC2 #1's user-data.
+set -euo pipefail
+
+REGION="${aws_region}"
+ACCOUNT_ID="${account_id}"
+REGISTRY="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+INSTALL_DIR="/data/coolify/source"
+
+echo "== Installing Docker =="
+curl -fsSL https://get.docker.com | sh
+systemctl enable docker
+systemctl start docker
+
+echo "== Installing AWS CLI v2 (skipped if already present - makes re-runs safe) =="
+if command -v aws >/dev/null 2>&1; then
+  echo "AWS CLI already installed ($(aws --version)) - skipping."
+else
+  apt-get update -y
+  apt-get install -y unzip curl
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+  rm -rf /tmp/awscliv2.zip /tmp/aws
+fi
+
+echo "== Creating docker network =="
+docker network create coolify || true
+
+echo "== Logging in to ECR (via instance role) =="
+# Retry: right after a fresh IAM role is created (especially when reusing
+# the same role name shortly after a previous destroy), AWS can take
+# anywhere from a few seconds to a few minutes to fully propagate the
+# role's permissions. Retry rather than failing on the first attempt.
+for i in $(seq 1 10); do
+  if aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"; then
+    echo "ECR login succeeded."
+    break
+  fi
+  echo "  ($i/10) ECR login failed (likely IAM propagation delay) - waiting 15s..."
+  sleep 15
+  if [ "$i" -eq 10 ]; then
+    echo "ECR login failed after 10 attempts - not an IAM propagation issue, check the role policy itself." >&2
+    exit 1
+  fi
+done
+
+echo "== Laying down compose files (embedded by Terraform, no file transfer needed) =="
+mkdir -p "$INSTALL_DIR"
+
+cat > "$INSTALL_DIR/docker-compose.yml" <<'COMPOSE_EOF'
+${docker_compose_content}
+COMPOSE_EOF
+
+cat > "$INSTALL_DIR/.env" <<'ENV_EOF'
+${env_template_content}
+ENV_EOF
+chmod 600 "$INSTALL_DIR/.env"
+chown root:root "$INSTALL_DIR/.env"
+
+echo "== Detecting this instance's own public IP (for initial APP_URL) =="
+TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+sed -i "s|__CONTROL_PLANE_PUBLIC_IP__|$PUBLIC_IP|" "$INSTALL_DIR/.env"
+
+echo "== Injecting secrets from AWS Secrets Manager =="
+get_secret () { aws secretsmanager get-secret-value --secret-id "$1" --query SecretString --output text --region "$REGION"; }
+
+sed -i "s|__APP_KEY__|$(get_secret coolify/app-key)|"                          "$INSTALL_DIR/.env"
+sed -i "s|__RDS_ENDPOINT__|$(get_secret coolify/rds-endpoint)|"                "$INSTALL_DIR/.env"
+sed -i "s|__DB_USERNAME__|$(get_secret coolify/db-username)|"                  "$INSTALL_DIR/.env"
+sed -i "s|__DB_PASSWORD__|$(get_secret coolify/db-password)|"                  "$INSTALL_DIR/.env"
+sed -i "s|__ELASTICACHE_ENDPOINT__|$(get_secret coolify/elasticache-endpoint)|" "$INSTALL_DIR/.env"
+sed -i "s|__ACCOUNT_ID__|$ACCOUNT_ID|"                                          "$INSTALL_DIR/.env"
+sed -i "s|__AWS_REGION__|$REGION|"                                              "$INSTALL_DIR/.env"
+sed -i "s|__COOLIFY_VERSION__|${versions.coolify}|"     "$INSTALL_DIR/.env"
+sed -i "s|__REALTIME_VERSION__|${versions.realtime}|"   "$INSTALL_DIR/.env"
+sed -i "s|__TRAEFIK_VERSION__|${versions.traefik}|"     "$INSTALL_DIR/.env"
+
+# NOTE: ROOT_USERNAME / ROOT_USER_EMAIL / ROOT_USER_PASSWORD and the
+# dashboard domain are intentionally NOT set here. Coolify will present its
+# own first-run registration screen - the admin creates the first account
+# and decides the domain manually, on first login, and keeps those
+# credentials privately (not in this pipeline).
+
+echo "== Starting Coolify stack from ECR images =="
+cd "$INSTALL_DIR"
+
+echo "== Preparing SSH keys directory with correct ownership =="
+mkdir -p /data/coolify/ssh
+# ASSUMPTION (unverified against every Coolify image build): the coolify
+# container runs as a non-root user, commonly UID/GID 9999 in this image.
+# If SSH key uploads from the Dashboard still fail with a permissions
+# error after a fresh deploy, run `docker exec coolify id` and re-run this
+# chown with the real UID/GID it reports.
+chown -R 9999:9999 /data/coolify/ssh
+
+docker compose up -d
+
+echo "== Waiting for the coolify container to become healthy before migrating =="
+for i in $(seq 1 30); do
+  STATUS=$(docker inspect --format='{{.State.Health.Status}}' coolify 2>/dev/null || echo "starting")
+  if [ "$STATUS" = "healthy" ]; then
+    echo "coolify is healthy."
+    break
+  fi
+  echo "  ($i/30) coolify status: $STATUS - waiting 10s..."
+  sleep 10
+done
+
+echo "== Running database migrations (creates instance_settings and all other tables) =="
+docker compose exec -T coolify php artisan migrate --force
+
+echo "== Done. Check status with: docker ps =="

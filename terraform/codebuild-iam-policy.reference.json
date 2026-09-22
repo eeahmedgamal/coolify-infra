@@ -1,0 +1,170 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "EC2ManageOnlyCoolifyTaggedResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateTags",
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:CreateVpc",
+        "ec2:DeleteVpc",
+        "ec2:ModifyVpcAttribute",
+        "ec2:CreateSubnet",
+        "ec2:DeleteSubnet",
+        "ec2:CreateInternetGateway",
+        "ec2:DeleteInternetGateway",
+        "ec2:AttachInternetGateway",
+        "ec2:DetachInternetGateway",
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:AssociateRouteTable",
+        "ec2:DisassociateRouteTable",
+        "ec2:AllocateAddress",
+        "ec2:ReleaseAddress",
+        "ec2:AssociateAddress",
+        "ec2:DisassociateAddress",
+        "ec2:ImportKeyPair",
+        "ec2:DeleteKeyPair",
+        "ec2:ModifyInstanceAttribute",
+        "ec2:ModifySubnetAttribute"
+      ],
+      "Resource": "*",
+      "Comment": "EC2/VPC/networking actions largely don't support fine-grained Resource ARNs in IAM - scoped instead via the aws:RequestTag / aws:ResourceTag conditions below."
+    },
+    {
+      "Sid": "EC2ReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:Describe*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RequireCoolifyTagOnCreate",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:RunInstances",
+        "ec2:CreateVpc",
+        "ec2:CreateSubnet",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateInternetGateway",
+        "ec2:CreateRouteTable"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestTag/product": "coolify"
+        }
+      }
+    },
+    {
+      "Sid": "IAMScopedToCoolifyRolesOnly",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:PassRole",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:GetInstanceProfile",
+        "iam:TagRole",
+        "iam:TagInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/coolify-*",
+        "arn:aws:iam::*:instance-profile/coolify-*"
+      ]
+    },
+    {
+      "Sid": "SecretsScopedToCoolifyPrefix",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:TagResource"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:coolify/*"
+    },
+    {
+      "Sid": "TerraformStateBucketOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::coolify-terraform-state",
+        "arn:aws:s3:::coolify-terraform-state/*"
+      ]
+    },
+    {
+      "Sid": "RDSScopedToCoolifyPrefix",
+      "Effect": "Allow",
+      "Action": "rds:*",
+      "Resource": [
+        "arn:aws:rds:*:*:db:coolify-*",
+        "arn:aws:rds:*:*:subgrp:coolify-*",
+        "arn:aws:rds:*:*:pg:coolify-*",
+        "arn:aws:rds:*:*:snapshot:coolify-*"
+      ],
+      "Comment": "The snapshot: ARN type is required because destroying the DB instance creates a final snapshot (see rds.tf's final_snapshot_identifier) - without it, terraform destroy fails at that step even though creation works fine."
+    },
+    {
+      "Sid": "RDSDescribeOnly",
+      "Effect": "Allow",
+      "Action": ["rds:Describe*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ElastiCacheScopedToCoolifyPrefix",
+      "Effect": "Allow",
+      "Action": "elasticache:*",
+      "Resource": [
+        "arn:aws:elasticache:*:*:replicationgroup:coolify-*",
+        "arn:aws:elasticache:*:*:subnetgroup:coolify-*"
+      ]
+    },
+    {
+      "Sid": "ElastiCacheDescribeOnly",
+      "Effect": "Allow",
+      "Action": ["elasticache:Describe*"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SSMReadOnlyForAmiLookup",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameter",
+      "Resource": "arn:aws:ssm:*::parameter/aws/service/canonical/*"
+    },
+    {
+      "Sid": "CloudWatchLogsForCodeBuildItself",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "arn:aws:logs:*:*:log-group:/aws/codebuild/coolify-*"
+    }
+  ]
+}

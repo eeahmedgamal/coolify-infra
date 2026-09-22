@@ -1,0 +1,33 @@
+version: 0.2
+
+env:
+  variables:
+    TF_VAR_aws_region: "us-east-1"
+
+phases:
+  install:
+    commands:
+      - echo "Installing Terraform..."
+      - curl -fsSL https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip -o terraform.zip
+      - unzip -o terraform.zip -d /usr/local/bin
+
+  pre_build:
+    commands:
+      - cd $CODEBUILD_SRC_DIR/terraform && terraform init -input=false
+
+  build:
+    commands:
+      - cd $CODEBUILD_SRC_DIR/terraform && terraform plan -input=false -out=tfplan
+      - cd $CODEBUILD_SRC_DIR/terraform && terraform apply -input=false -auto-approve tfplan
+
+  post_build:
+    commands:
+      - cd $CODEBUILD_SRC_DIR/terraform && terraform output -json > $CODEBUILD_SRC_DIR/terraform-outputs.json
+      - echo "Control Plane IP and Runtime IPs are in terraform-outputs.json"
+      - echo "REMINDER - manual steps still required after this run:"
+      - echo "  1) Log in to the Coolify Dashboard once, create the Bootstrap API Token, store it as coolify/api-token in Secrets Manager."
+      - echo "  2) Register each runtime server via the Coolify GUI (Security -> Private Keys, then Servers -> New Server) using the private key from Secrets Manager (coolify/ssh-keys/<name>) and the private IP from terraform-outputs.json."
+
+artifacts:
+  files:
+    - terraform-outputs.json

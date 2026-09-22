@@ -1,0 +1,109 @@
+# Coolify stack - modified to pull images from a private ECR instead of
+# Docker Hub / GHCR. Structurally mirrors the official Coolify compose file
+# (proxy, core app, realtime, sentinel), with postgres/redis intentionally
+# OMITTED - this deployment uses Amazon RDS and ElastiCache instead.
+#
+# IMPORTANT: after any official Coolify upgrade, diff this file against the
+# upstream docker-compose.yml (in a fresh /data/coolify/source on a throwaway
+# instance) to catch any structural changes before applying them here.
+
+networks:
+  coolify:
+    external: true
+
+volumes:
+  coolify-data:
+
+services:
+  coolify-proxy:
+    image: "${ECR_REGISTRY}/coolify/traefik:${TRAEFIK_VERSION}"
+    container_name: coolify-proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    networks:
+      - coolify
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /data/coolify/proxy:/traefik
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=coolify"
+      - "--entrypoints.http.address=:80"
+      - "--entrypoints.https.address=:443"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=http"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/traefik/acme.json"
+      - "--ping=true"
+      - "--ping.entrypoint=http"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  coolify:
+    image: "${ECR_REGISTRY}/coolify/coolify:${COOLIFY_VERSION}"
+    container_name: coolify
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - coolify
+    ports:
+      # Exposed directly for now (accessed as http://<control-plane-ip>:8080)
+      # since the production domain is not yet decided. Once it is, switch
+      # this to Traefik Host-based routing instead (see the commented labels
+      # below) and remove this direct port mapping.
+      - "8080:8080"
+    volumes:
+      - coolify-data:/data/coolify
+      - /data/coolify/ssh:/var/www/html/storage/app/ssh
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - coolify-realtime
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    # Once the domain is finalized, switch to routing via Traefik instead of
+    # the direct port mapping above:
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.coolify.rule=Host(`<your-chosen-domain>`)"
+    #   - "traefik.http.routers.coolify.entrypoints=https"
+    #   - "traefik.http.routers.coolify.tls.certresolver=letsencrypt"
+    #   - "traefik.http.services.coolify.loadbalancer.server.port=8080"
+
+  coolify-realtime:
+    image: "${ECR_REGISTRY}/coolify/coolify-realtime:${REALTIME_VERSION}"
+    container_name: coolify-realtime
+    restart: unless-stopped
+    env_file: .env
+    networks:
+      - coolify
+    ports:
+      - "6001:6001"
+      - "6002:6002"
+    # No healthcheck defined here on purpose: this image reports its
+    # WebSocket listener as bound to 127.0.0.1 in its own logs, which made
+    # a wget-based healthcheck unreliable (uncertain whether that's a real
+    # bind-address issue or just informational text) - a false "unhealthy"
+    # status was worse than no status. The container has been confirmed
+    # working via Horizon (which depends on Redis/this service) reporting
+    # "running" - see README's "Known Issues Resolved" section.
+
+# NOTE: coolify-db (PostgreSQL) and coolify-redis (Redis) are intentionally
+# NOT defined here. DB_HOST / DB_PORT / REDIS_HOST / REDIS_PORT in .env point
+# at Amazon RDS and Amazon ElastiCache respectively (see terraform/rds.tf and
+# terraform/elasticache.tf).
+#
+# NOTE: coolify-sentinel is also intentionally NOT defined here. It is
+# optional, and on the Control Plane it crash-loops without the TOKEN and
+# PUSH_ENDPOINT env vars this compose file doesn't set. It activates
+# correctly on Runtime servers instead, driven directly by Coolify itself
+# from the Dashboard (Servers -> a runtime server -> enable Sentinel) -
+# that path sets its required env vars automatically.
