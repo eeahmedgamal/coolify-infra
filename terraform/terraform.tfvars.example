@@ -6,9 +6,9 @@
 # from CodeBuild environment variables instead (see README.md).
 
 # --- Required, no default ---
-account_id     = "123456789012"     # your AWS account ID
-admin_ssh_cidr = "203.0.113.4/32"   # your own IP, for SSH + initial dashboard access
-tag_owner      = "you@example.com"  # whoever is responsible for these resources
+account_id     = "333596351046"     # your AWS account ID
+admin_ssh_cidr = "41.37.97.160/32"   # your own IP, for SSH + initial dashboard access
+tag_owner      = "ahmed.atya@flairstech.com"  # whoever is responsible for these resources
 
 # --- Optional overrides (sensible defaults already exist in variables.tf) ---
 # aws_region                  = "us-east-1"
