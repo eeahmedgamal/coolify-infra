@@ -21,7 +21,7 @@ terraform {
     # can work around). If you change the region for a different case, this
     # line must be updated by hand, or overridden at `terraform init` time:
     #   terraform init -backend-config="region=<new-region>"
-    bucket = "coolify-terraform-state"
+    bucket = "coolify-terraform-state-333596351046"
     key    = "production/terraform.tfstate"
     region = "us-east-1"
   }
